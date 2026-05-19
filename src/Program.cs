@@ -53,7 +53,7 @@ class FlasherForm : Form
     AirohaSDK.UpdateCallback _callback = null!;
     volatile bool _readyToApply, _done, _flashing, _applying;
 
-    static readonly ushort[] PIDS = [0x4B18, 0x4B19, 0x4B1E];
+    static readonly ushort[] PIDS = [0x4B18, 0x4B19, 0x4B1A, 0x4B1E];
 
     public FlasherForm()
     {
@@ -222,7 +222,7 @@ class FlasherForm : Form
             result = AirohaSDK.initializeAirohaSDK(0x3329, pid);
             if (result == 1)
             {
-                string name = pid switch { 0x4B18 => "Xbox Dongle", 0x4B19 => "PS Dongle", 0x4B1E => "Headset (USB-C)", _ => $"0x{pid:X4}" };
+                string name = pid switch { 0x4B18 => "Xbox Dongle", 0x4B19 => "PS Dongle", 0x4B1A => "PS Headset (USB-C)", 0x4B1E => "Xbox Headset (USB-C)", _ => $"0x{pid:X4}" };
                 Log($"Connected ({name})");
                 break;
             }
