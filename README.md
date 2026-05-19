@@ -62,9 +62,9 @@ All files include Xbox dongle, Xbox headset, PS dongle, and PS headset variants.
 | Problem | Solution |
 |---------|----------|
 | "Could not connect to device" | For dongle: headset must be powered on and wirelessly paired. For headset: connect via USB-C cable directly to PC. Close any Audeze app. |
-| Stuck on "Transferring..." | Normal — dongle takes ~60s, headset takes ~3-4 minutes. Be patient, do not unplug. |
+| Stuck on "Transferring..." | Normal — dongle takes 2–3 minutes, headset takes 3–4 minutes. Be patient, do not unplug. |
 | Status `FAIL/TIMEOUT` | Unplug and replug, then try again. If it keeps failing, see "Stuck FOTA" below. |
-| Stuck FOTA (won't flash anything) | Hold headset power button 15+ seconds to force-off, wait 60 seconds, then plug back in and retry. |
+| Stuck FOTA (won't flash anything) | Unplug USB-C, turn the headset off, wait 10 seconds, turn it back on, wait 20 seconds, then plug USB-C back in and retry. |
 | Device shows as generic "USB Device" | Device Manager → right-click the device → Update driver → "Let me pick" → choose **USB Composite Device**. |
 
 ## How It Works
