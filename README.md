@@ -2,7 +2,7 @@
 
 A self-contained community tool to flash/downgrade Audeze Maxwell headset firmware. Works even when Audeze's official rollback feature is disabled.
 
-**Why?** Firmware v1.0.1.74 introduced an L/R audio balance issue for some Maxwell users. Audeze disabled the rollback feature in their official app, leaving affected users stuck. Audeze has also stopped releasing updates for the original Maxwell since Maxwell V2 launched. This tool lets you flash any firmware version directly.
+**Why?** Firmware v1.0.1.74 introduced an L/R audio balance issue for some Maxwell users, and there hasn't been a firmware update since (roughly two years). Audeze also disabled the rollback feature in their official app, leaving affected users stuck. This tool lets you flash any firmware version directly.
 
 ## What's Included
 
