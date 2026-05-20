@@ -187,7 +187,7 @@ class FlasherForm : Form
         var tgt = _target.SelectedIndex == 0 ? "dongle" : "headset";
         var msg = tgt == "dongle"
             ? "For DONGLE update:\n- USB dongle plugged in (PC mode)\n- Headset powered ON wirelessly\n- Audeze apps closed"
-            : "For HEADSET update:\n- UNPLUG the USB dongle (must not be connected to PC)\n- Headset connected via USB-C cable to PC\n- Headset POWERED ON\n- Verify Windows detects the headset as an audio output device\n  (Sound settings -> Output -> 'Audeze Maxwell Game/Chat' should appear)\n- Audeze apps closed (HQ, Tray, etc.)";
+            : "For HEADSET update:\n- UNPLUG the USB dongle (must not be connected to PC)\n- Headset connected to the PC via USB-C cable\n- Confirm the headset is DETECTED in the Audeze app — that means\n  it is ready to flash (powered on or off does not matter)\n- Close the Audeze app before clicking OK";
 
         if (MessageBox.Show($"Flash {Path.GetFileName(fwFile)}?\n\n{msg}\n\nDO NOT disconnect during the process!",
             "Confirm Flash", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
