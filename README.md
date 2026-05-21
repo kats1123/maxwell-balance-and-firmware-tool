@@ -1,5 +1,9 @@
 # Audeze Maxwell Tool
 
+> ### ⚠️ Please read the instructions carefully before you start
+>
+> Especially if you are going to make and flash **custom firmware** — the process has some deliberately unintuitive steps, and guessing your way through it will not work. In short: you tune the balance while on firmware **v1.0.1.74**, then **downgrade** to stock **v1.0.1.63**, then **upgrade** to your custom v1.0.1.74, and finally run a **factory reset**. The order matters. Read the [balance walkthrough](#fixing-the-lr-balance--step-by-step) below — or the in-app **Guide** button — all the way through before touching anything.
+
 A self-contained Windows tool for the Audeze Maxwell headset that does two things:
 
 1. **Fixes the L/R audio balance** — permanently, baked into the headset's own firmware, so the fix works everywhere (iPhone, console, PC) with no software running.
@@ -77,6 +81,8 @@ This is the main job of the tool. The result is a custom firmware with your corr
 **7. Run the factory reset.** After the custom flash the tool checks the headset and — because the baked-in values are not active until a reset — prompts you with a **Run Factory Reset** button. Click it. This step is required: flashing only updates the firmware *code*; the factory-reset routine is what writes the new balance into the headset's settings.
 
 Once done, the fix lives in the headset. It works on a phone, a console, anything — with nothing connected to a PC. The tool checks your connection at every step and will stop you before a common mistake (dongle still plugged in, wrong version, skipped reset) costs you a 10-minute flash.
+
+> **Only the headset needs custom firmware — the wireless dongle does not.** The balance correction is baked into the *headset's* firmware. There is no custom firmware for the dongle, and you never need to flash the dongle to get the balance fix. Leave the dongle on its stock firmware.
 
 ---
 
