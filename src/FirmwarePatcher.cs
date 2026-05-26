@@ -67,6 +67,16 @@ static class FirmwarePatcher
         Array.Copy(movw, 0, decomp, btOff, 4);
         Array.Copy(movw, 0, decomp, usbOff, 4);
 
+        // Force the NVDM 0xF702 reader (FUN_0x0817B2F4) to always return 0,
+        // pinning every F702-keyed decision to the wireless audio profile.
+        // The Maxwell ships with the per-source switching machinery designed
+        // but the master event router removed - F702 is a frozen factory byte
+        // and some units shipped with F702 = 0x0A (USB-C profile), which
+        // applies the L/R-asymmetric balance default and an older EQ tuning.
+        // Returning 0 from the reader pins the firmware to the wireless
+        // profile permanently, regardless of what NVDM 0xF702 holds.
+        PatchSourceReader(decomp);
+
         // Recompute per-partition SHA-256 (TLV 0x0014).
         int t14 = FindTlv(header, 0x0014);
         uint hcount = Rd32(header, t14 + 4);
@@ -101,6 +111,59 @@ static class FirmwarePatcher
         byte[] outer = SHA256.HashData(outRaw.AsSpan(0x100));
         Array.Copy(outer, 0, outRaw, 0, 32);
         return outRaw;
+    }
+
+    // Patch the F702-reader wrapper (FUN_0x0817B2F4) to always return 0.
+    // Original 4-byte prologue:
+    //     07 B5        push {r0, r1, r2, lr}
+    //     FF 23        movs r3, #0xFF
+    // Patched to:
+    //     00 20        movs r0, #0
+    //     70 47        bx lr
+    // After patching, the function returns 0 immediately; every caller (boot
+    // DSP init, RACE balance writer, state handler) sees "wireless profile".
+    //
+    // The patch site is located by pattern search using a 20-byte unique
+    // signature that includes the F702 key load. Verified unique in both
+    // stock_xbox_74 and stock_ps_74 (May 2026).
+    static void PatchSourceReader(byte[] fw)
+    {
+        // 20-byte signature: prologue + key load.
+        //   07 B5         push {r0,r1,r2,lr}
+        //   FF 23         movs r3, #0xFF
+        //   8D F8 03 30   strb.w r3, [sp, #3]
+        //   01 AA         add r2, sp, #4
+        //   01 23         movs r3, #1
+        //   0D F1 03 01   add.w r1, sp, #3
+        //   4F F2 02 70   movw r0, #0xF702
+        byte[] sig = {
+            0x07, 0xB5, 0xFF, 0x23, 0x8D, 0xF8, 0x03, 0x30,
+            0x01, 0xAA, 0x01, 0x23, 0x0D, 0xF1, 0x03, 0x01,
+            0x4F, 0xF2, 0x02, 0x70,
+        };
+        int o = IndexOf(fw, sig, 0);
+        if (o < 0)
+            throw new Exception("F702 reader patch site not found - firmware version mismatch.");
+        // Make sure there's only one match (so we don't patch the wrong site).
+        if (IndexOf(fw, sig, o + 1) >= 0)
+            throw new Exception("F702 reader patch site is ambiguous - multiple matches.");
+        // movs r0, #0 ; bx lr
+        fw[o + 0] = 0x00;
+        fw[o + 1] = 0x20;
+        fw[o + 2] = 0x70;
+        fw[o + 3] = 0x47;
+    }
+
+    static int IndexOf(byte[] hay, byte[] needle, int start)
+    {
+        int n = needle.Length;
+        for (int i = start; i + n <= hay.Length; i++)
+        {
+            int j = 0;
+            while (j < n && hay[i + j] == needle[j]) j++;
+            if (j == n) return i;
+        }
+        return -1;
     }
 
     // Locate the 'movw r3,#<default>' that feeds an NVDM key's default

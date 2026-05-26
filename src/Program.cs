@@ -161,6 +161,7 @@ class MaxwellForm : Form
     System.Windows.Forms.Timer _pollTimer;
     bool _balAutoReadDone;        // balance auto-read on first Balance-tab open
     long _lastApplyTick;          // Environment.TickCount64 of the last Apply
+    int _sourceStateCache = -1;   // NVDM 0xF702 cached in-memory. -1 = not read yet; 0x0A = USB-C; other = wireless. Cleared on app restart only.
 
     readonly Dictionary<string, string> _customFw = new();
     readonly List<FileSystemWatcher> _watchers = new();
@@ -1511,7 +1512,7 @@ SAFETY
 
         _srcBtn = new Button
         {
-            Text = "Check Source",
+            Text = "Set Audio Source",
             Location = new Point(216, 14),
             Size = new Size(134, 28),
             FlatStyle = FlatStyle.Flat,
@@ -1521,7 +1522,7 @@ SAFETY
             Cursor = Cursors.Hand,
         };
         _srcBtn.FlatAppearance.BorderSize = 0;
-        _srcBtn.Click += OnCheckSource;
+        _srcBtn.Click += OnSetSource;
 
         _balL = Spinner(new Point(140, 60));
         _balR = Spinner(new Point(140, 100));
@@ -1610,39 +1611,111 @@ SAFETY
             }
             _balAutoReadDone = true;
             BalLog($"Read OK: L={res.L} R={res.R}");
+
+            // Once per session, surface a warning if the headset is stuck on
+            // the USB-C audio profile (NVDM 0xF702 = 0x0A). The cache means
+            // we only hit the headset for this once - the value never changes
+            // in normal operation, so re-reading on every Read is wasteful.
+            int src = await EnsureSourceStateAsync();
+            if (src == 0x0A)
+                BalLog("WARNING: headset is on the USB-C audio profile - click 'Set Audio Source' above to switch to Wireless before calibrating.");
         }
         else BalLog("Read failed: " + res.Message);
         _readBtn.Enabled = true;
     }
 
-    // Reads NVDM 0xF702 - which per-source audio profile the headset has
-    // loaded right now (USB-C vs dongle/wireless).
-    async void OnCheckSource(object sender, EventArgs e)
+    // Get the headset's audio source profile (NVDM 0xF702). Cached for the
+    // session because nothing in the firmware ever updates F702 in normal use -
+    // it's a static factory-provisioned byte. The cache is cleared only by an
+    // app restart or by a successful Set Audio Source write below.
+    // Returns -1 on read failure.
+    async Task<int> EnsureSourceStateAsync()
+    {
+        if (_sourceStateCache >= 0) return _sourceStateCache;
+        var res = await Task.Run(() => HidRace.ReadSourceState());
+        if (res.Ok) _sourceStateCache = res.State;
+        return _sourceStateCache;
+    }
+
+    // Set the headset's audio source profile to wireless (NVDM 0xF702 = 0).
+    // Some headsets ship factory-stuck on the USB-C audio profile (F702 = 0x0A)
+    // which carries an asymmetric L/R balance default (141/149) and an older
+    // EQ tuning. Wireless is the profile Audeze keeps current and is the
+    // correct one for this product regardless of how you connect.
+    async void OnSetSource(object sender, EventArgs e)
     {
         if (_flashing || _resetting)
         {
             BalLog("A flash or reset is in progress - wait for it to finish.");
             return;
         }
+
+        var confirm = Dlg(
+            "Set the headset's audio source to Wireless?\n\n"
+            + "Some Maxwell headsets ship stuck on the USB-C audio profile,\n"
+            + "which causes an L/R imbalance and applies an older EQ tuning.\n"
+            + "The Wireless profile is the correct one for this product.\n\n"
+            + "Even if you use the USB-C cable for audio, the Wireless profile\n"
+            + "is still the right one - Audeze keeps it current; the USB-C\n"
+            + "profile is older and has known imbalance issues.\n\n"
+            + "This sets NVDM 0xF702 = 0x00. The change persists across reboots.",
+            "Set Audio Source", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+        if (confirm != DialogResult.OK) return;
+
         _srcBtn.Enabled = false;
-        BalLog("Checking the audio source profile...");
-        var res = await Task.Run(() => HidRace.ReadSourceState());
+        BalLog("Setting audio source to Wireless...");
+        var res = await Task.Run(() => HidRace.WriteSourceState(0x00));
         if (res.Ok)
         {
-            string profile = res.State == 0x0A ? "USB-C" : "Dongle / wireless";
-            BalLog($"Source profile: {profile}  (0xF702 = 0x{res.State:X2})");
+            _sourceStateCache = res.State;   // update cache to the now-correct value
+            BalLog($"Audio source set to Wireless (0xF702 = 0x{res.State:X2}).");
             Dlg(
-                $"This headset is currently on the {profile} audio profile.\n\n"
-                + $"Source-state byte 0xF702 = 0x{res.State:X2} ({res.State}).",
-                "Audio Source Profile", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                "Audio source set to Wireless.\n\n"
+                + "Your headset is now on the correct audio profile.",
+                "Audio Source", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         else
         {
-            BalLog("Source check failed: " + res.Message);
-            Dlg("Could not read the source profile.\n\n" + res.Message,
-                "Audio Source Profile", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            BalLog("Set audio source failed: " + res.Message);
+            Dlg("Could not set the audio source.\n\n" + res.Message,
+                "Audio Source", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         _srcBtn.Enabled = true;
+    }
+
+    // Hard-block dialog used by Apply and Make Custom Firmware when the
+    // cached source is USB-C. Returns true if the caller should proceed
+    // (either user picked "set and continue" - in which case F702 has been
+    // written - or user picked "continue anyway").
+    async Task<bool> ConfirmSourceBeforeWrite(string action)
+    {
+        int state = await EnsureSourceStateAsync();
+        if (state != 0x0A) return true;   // wireless or unknown -> proceed
+
+        var r = Dlg(
+            $"Your headset is on the USB-C audio profile.\n\n"
+            + $"{action} now would tune the wrong profile - the L/R balance\n"
+            + "you calibrate may not take effect correctly.\n\n"
+            + "Switch to the Wireless profile first?  (Recommended)",
+            "Wrong Audio Profile", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning,
+            primaryText: "Set Wireless and continue",
+            secondaryText: "Continue anyway");
+        if (r == DialogResult.Cancel) return false;
+        if (r == DialogResult.Yes)
+        {
+            BalLog("Setting audio source to Wireless before continuing...");
+            var w = await Task.Run(() => HidRace.WriteSourceState(0x00));
+            if (!w.Ok)
+            {
+                BalLog("Could not set audio source: " + w.Message);
+                Dlg("Could not set the audio source.\n\n" + w.Message + "\n\nAbort.",
+                    "Audio Source", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+            _sourceStateCache = w.State;
+            BalLog($"Audio source set to Wireless (0xF702 = 0x{w.State:X2}).");
+        }
+        return true;   // Yes (set+continue) or No (continue anyway)
     }
 
     async void OnApply(object sender, EventArgs e)
@@ -1652,6 +1725,7 @@ SAFETY
             BalLog("A flash or reset is in progress - wait for it to finish.");
             return;
         }
+        if (!await ConfirmSourceBeforeWrite("Applying balance")) return;
         int l = (int)_balL.Value, r = (int)_balR.Value;
         _applyBtn.Enabled = false;
         var res = await Task.Run(() => HidRace.WriteBalance(l, r));
@@ -1671,6 +1745,7 @@ SAFETY
             BalLog("A flash or reset is in progress - wait for it to finish.");
             return;
         }
+        if (!await ConfirmSourceBeforeWrite("Building custom firmware")) return;
         int l = (int)_balL.Value, r = (int)_balR.Value;
 
         // Pick Xbox vs PlayStation from the connected headset; fall back to the
@@ -1741,6 +1816,27 @@ static class Program
             {
                 File.WriteAllText(Path.Combine(dir, "selftest_result.txt"), "FAIL: " + ex);
             }
+            return;
+        }
+
+        // Hidden test helper: write any byte to NVDM 0xF702. Used to force the
+        // headset into the "wrong" audio profile for QA of the Set Audio Source
+        // button on the Balance tab. Usage:
+        //   MaxwellTool.exe --setsource 0x0A   (force USB-C profile)
+        //   MaxwellTool.exe --setsource 0      (force wireless profile)
+        if (args.Length >= 2 && args[0] == "--setsource")
+        {
+            string s = args[1];
+            byte val;
+            try { val = (byte)Convert.ToInt32(s, s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10); }
+            catch { Console.WriteLine("usage: MaxwellTool.exe --setsource <byte>  (e.g. 0x0A or 0)"); return; }
+            Console.WriteLine($"Reading current source state...");
+            var pre = HidRace.ReadSourceState();
+            Console.WriteLine(pre.Ok ? $"  before: 0xF702 = 0x{pre.State:X2}" : $"  read failed: {pre.Message}");
+            Console.WriteLine($"Writing 0xF702 = 0x{val:X2}...");
+            var w = HidRace.WriteSourceState(val);
+            if (w.Ok) Console.WriteLine($"  OK. 0xF702 is now 0x{w.State:X2}.");
+            else Console.WriteLine($"  write failed: {w.Message}");
             return;
         }
 

@@ -30,6 +30,20 @@ Keep everything in that folder together — the `.exe` needs the other files bes
 
 **Why this exists.** Firmware v1.0.1.74 left some Maxwell units with an audible left/right loudness imbalance, and there has been no firmware update in roughly two years. This tool lets you measure your headset's balance, dial in a correction by ear, and bake it into a custom firmware that survives reboots and source changes.
 
+### Why the imbalance happens — short version
+
+The Maxwell firmware contains **two audio profiles**: one for the USB-C cable input (with an asymmetric `141 / 149` left/right balance baked in to compensate for something in the USB-C signal path) and one for wireless (`147 / 147` — symmetric). A single NVDM byte (`0xF702`) picks which profile is active.
+
+Audeze **designed** a system that would switch this byte automatically based on the live audio source — there's a complete event-routing infrastructure inside the firmware for it: a state handler, per-source helper functions, a 22-entry dispatch table. But the master event router that drives the table was **removed** before shipping. The dispatcher and its table sit in flash as orphaned dead code — verifiable by anyone who reverse-engineers the firmware: the table at `0x081C3134` has zero loaders anywhere in the binary, and surrounding clusters of `bx lr` stubs (notably at `0x081567CC` and `0x0820D264`) are the empty shells of removed state-query functions.
+
+With no live driver, `0xF702` becomes a **frozen factory value**. Whatever Audeze's QC bench wrote at end-of-line is what the headset is stuck on for the life of the device — factory reset doesn't touch it, the Audeze app doesn't set it, and the dongle doesn't either. Some units ship at `0x0A` (the asymmetric USB-C profile) and **those are the units that hear the imbalance**, regardless of how they connect. Others ship at `0x00` (wireless, symmetric) and never notice anything wrong.
+
+This tool fixes the problem two ways:
+1. **A one-shot RACE write** ("Set Audio Source" button) flips your headset to the wireless profile, no flashing required. The setting persists indefinitely because nothing in the firmware ever rewrites `0xF702`.
+2. **The custom firmware patches the F702 reader** to always return `0` (wireless). After flashing, the headset ignores `0xF702` entirely — bulletproof, even if some future tool re-writes the NVDM byte.
+
+Either path leaves you on the wireless profile, where your per-unit balance calibration (also written to NVDM by this tool) takes effect cleanly.
+
 > 📖 Want the deep technical story — *why* the imbalance exists and how the firmware works internally? See the companion research repo: **[maxwell-firmware-research](https://github.com/kats1123/maxwell-firmware-research)**.
 
 ---

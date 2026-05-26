@@ -396,6 +396,42 @@ static class HidRace
         finally { CloseHandle(h); }
     }
 
+    // Write the audio source state (NVDM 0xF702) via RACE cmd 0x0900 sub 0x2F.
+    // The Maxwell firmware has the per-source profile system designed but the
+    // master event router is removed - so once F702 is written, nothing in
+    // the firmware ever changes it. The write persists for the life of the
+    // headset (or until another host re-writes it). 0x00 = wireless profile,
+    // which is the correct one for this product.
+    public static SourceResult WriteSourceState(byte value)
+    {
+        var r = new SourceResult();
+        IntPtr h = Open(out int outLen, out int inLen, out _);
+        if (h == INVALID) { r.Message = "Headset not found. Connect it via USB-C or the dongle."; return r; }
+        try
+        {
+            // RACE cmd 0x0900 sub 0x2F: 1-byte payload = new F702 value.
+            byte[] body = { 0x80, 0x05, 0x5A, 0x05, 0x00, 0x00, 0x09, 0x2F, 0x00, value };
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                DrainInput(h, inLen);
+                WriteFile(h, BuildReport1(outLen, body), outLen, out _, IntPtr.Zero);
+                Thread.Sleep(150);
+                // Verify by reading back.
+                int got = ReadGain(h, outLen, inLen, 0x2F, 4);
+                if (got == value)
+                {
+                    r.Ok = true;
+                    r.State = got;
+                    return r;
+                }
+                Thread.Sleep(100);
+            }
+            r.Message = "Write did not stick - try again.";
+            return r;
+        }
+        finally { CloseHandle(h); }
+    }
+
     // Write L/R balance via RACE (cmd 0x0900 sub 0x29 = L, 0x2A = R).
     // Applies live to the DSP and persists to NVDM.
     public static Result WriteBalance(int L, int R)
