@@ -151,6 +151,7 @@ class MaxwellForm : Form
     Label _balCurrent;
     Button _readBtn, _applyBtn, _makeFwBtn, _resetBtn2, _srcBtn;
     TextBox _balLog;
+    string _lastFwVersion = "74";  // last picked Make-Custom-Firmware base version
 
     // detected device state (filled by RefreshHeadsetInfo)
     bool _isPs;                   // detected platform: true = PlayStation
@@ -1738,6 +1739,89 @@ SAFETY
         _applyBtn.Enabled = true;
     }
 
+    // Pop a custom dialog asking which firmware base version to build the
+    // custom on. Returns "56" / "61" / "63" / "74", or null on cancel.
+    string PickFirmwareVersion()
+    {
+        using var form = new Form
+        {
+            Text = "Custom Firmware - choose base version",
+            Size = new Size(480, 320),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            BackColor = BG,
+            ForeColor = FG,
+        };
+        var head = new Label
+        {
+            Text = "Which Maxwell firmware version do you want to bake your balance into?",
+            Location = new Point(20, 18),
+            Size = new Size(440, 36),
+            ForeColor = FG,
+        };
+        // Version radio buttons (one per supported version).
+        // Order: newest first. v74 is the default (current behavior preserved).
+        string[] versions = { "74", "63", "61", "56" };
+        string[] descriptions =
+        {
+            "v1.0.1.74  -  Latest. All bug fixes; recommended for most users.",
+            "v1.0.1.63  -  Older. Has the (incomplete) per-source switching system.",
+            "v1.0.1.61  -  First version with the per-source switching system.",
+            "v1.0.1.56  -  Pre-feature baseline. No per-source machinery at all - the simplest possible firmware (the L/R imbalance bug doesn't exist in this version).",
+        };
+        var radios = new RadioButton[versions.Length];
+        int y = 60;
+        for (int i = 0; i < versions.Length; i++)
+        {
+            radios[i] = new RadioButton
+            {
+                Text = descriptions[i],
+                Location = new Point(28, y),
+                Size = new Size(420, 40),
+                ForeColor = FG,
+                BackColor = BG,
+                Checked = versions[i] == _lastFwVersion,
+            };
+            y += 44;
+        }
+        if (!radios.Any(r => r.Checked)) radios[0].Checked = true;
+        var ok = new Button
+        {
+            Text = "OK",
+            DialogResult = DialogResult.OK,
+            Location = new Point(280, 240),
+            Size = new Size(80, 30),
+            BackColor = ACCENT,
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+        };
+        ok.FlatAppearance.BorderSize = 0;
+        var cancel = new Button
+        {
+            Text = "Cancel",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(370, 240),
+            Size = new Size(80, 30),
+            BackColor = PANEL,
+            ForeColor = FG,
+            FlatStyle = FlatStyle.Flat,
+        };
+        cancel.FlatAppearance.BorderSize = 0;
+        form.AcceptButton = ok;
+        form.CancelButton = cancel;
+        form.Controls.Add(head);
+        foreach (var rb in radios) form.Controls.Add(rb);
+        form.Controls.Add(ok);
+        form.Controls.Add(cancel);
+        if (form.ShowDialog(this) != DialogResult.OK) return null;
+        for (int i = 0; i < radios.Length; i++)
+            if (radios[i].Checked) { _lastFwVersion = versions[i]; return versions[i]; }
+        return null;
+    }
+
     async void OnMakeFirmware(object sender, EventArgs e)
     {
         if (_flashing || _resetting)
@@ -1755,33 +1839,50 @@ SAFETY
         string platName = ps ? "PlayStation" : "Xbox";
         string srcNote = variant != null ? "from the connected headset" : "from the last detected device";
 
+        // Pick which firmware base version to build on. Returns null if user
+        // cancels the picker dialog.
+        string version = PickFirmwareVersion();
+        if (version == null) return;
+        string verStr = $"v1.0.1.{version}";
+
+        // v56 has only ONE balance key (no per-source switching exists yet),
+        // so the confirmation text differs slightly.
+        string v56Note = version == "56"
+            ? "\n\nNOTE: v1.0.1.56 predates the per-source switching system. "
+              + "It has a single balance default (the bug introduced in v1.0.1.61 "
+              + "doesn't exist in this version). Your calibrated balance will be "
+              + "written to the one NVDM key v56 uses."
+            : "";
+
         if (Dlg(
-            $"Build a custom {platName} v1.0.1.74 firmware with balance L={l}, R={r}?\n\n"
+            $"Build a custom {platName} {verStr} firmware with balance L={l}, R={r}?\n\n"
             + $"Platform: {platName} ({srcNote}).\n"
+            + $"Base: stock {verStr}." + v56Note + "\n\n"
             + "It will be saved and added to the Firmware tab to flash.",
             "Make Custom Firmware", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
             return;
 
         _makeFwBtn.Enabled = false;
-        BalLog("Building custom firmware...");
+        BalLog($"Building custom {verStr} firmware...");
         try
         {
-            byte[] fw = await Task.Run(() => FirmwarePatcher.Build(ps, l, r));
+            byte[] fw = await Task.Run(() => FirmwarePatcher.Build(ps, version, l, r));
             Directory.CreateDirectory(CustomDir);
             string tag = ps ? "PS" : "XBOX";
-            string path = Path.Combine(CustomDir, $"{tag}_74_balance_L{l}_R{r}.bin");
+            string path = Path.Combine(CustomDir, $"{tag}_{version}_balance_L{l}_R{r}.bin");
             File.WriteAllBytes(path, fw);
-            BalLog($"Built custom {platName} firmware: {Path.GetFileName(path)} ({fw.Length} bytes)");
+            BalLog($"Built custom {platName} {verStr} firmware: {Path.GetFileName(path)} ({fw.Length} bytes)");
             RefreshVersions();
             string disp = "Custom " + Path.GetFileNameWithoutExtension(path);
             int idx = _version.Items.IndexOf(disp);
             if (idx >= 0) _version.SelectedIndex = idx;
             ShowPage(true);
             Dlg(
-                $"Custom {platName} firmware created and selected on the Firmware tab.\n\n"
+                $"Custom {platName} {verStr} firmware created and selected on the Firmware tab.\n\n"
                 + "1. Click Flash Firmware to flash it.\n"
-                + "   If the headset is already on v1.0.1.74, flash stock\n"
-                + "   v1.0.1.63 first - you cannot reflash the same version.\n"
+                + "   If the headset is already on the same version, flash a\n"
+                + "   different stock version first - you cannot reflash the\n"
+                + "   same version.\n"
                 + "2. After flashing, the tool walks you through the\n"
                 + "   required factory reset.",
                 "Custom Firmware Ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1804,18 +1905,29 @@ static class Program
         if (args.Length > 0 && args[0] == "--selftest")
         {
             string dir = AppContext.BaseDirectory;
-            try
+            var lines = new List<string>();
+            bool anyFail = false;
+            foreach (string version in FirmwarePatcher.SupportedVersions)
             {
-                byte[] xb = FirmwarePatcher.Build(false, 143, 148);
-                byte[] ps = FirmwarePatcher.Build(true, 143, 148);
-                File.WriteAllBytes(Path.Combine(dir, "selftest_xbox.bin"), xb);
-                File.WriteAllBytes(Path.Combine(dir, "selftest_ps.bin"), ps);
-                File.WriteAllText(Path.Combine(dir, "selftest_result.txt"), $"OK xbox={xb.Length} ps={ps.Length}");
+                foreach (bool ps in new[] { false, true })
+                {
+                    string tag = ps ? "ps" : "xbox";
+                    string outFile = Path.Combine(dir, $"selftest_{tag}_{version}.bin");
+                    try
+                    {
+                        byte[] fw = FirmwarePatcher.Build(ps, version, 143, 148);
+                        File.WriteAllBytes(outFile, fw);
+                        lines.Add($"OK  {tag} v{version}: {fw.Length} bytes");
+                    }
+                    catch (Exception ex)
+                    {
+                        lines.Add($"FAIL {tag} v{version}: {ex.Message}");
+                        anyFail = true;
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                File.WriteAllText(Path.Combine(dir, "selftest_result.txt"), "FAIL: " + ex);
-            }
+            string summary = (anyFail ? "FAIL\n" : "OK\n") + string.Join("\n", lines);
+            File.WriteAllText(Path.Combine(dir, "selftest_result.txt"), summary);
             return;
         }
 

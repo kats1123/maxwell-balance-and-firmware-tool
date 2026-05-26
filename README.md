@@ -32,17 +32,25 @@ Keep everything in that folder together — the `.exe` needs the other files bes
 
 ### Why the imbalance happens — short version
 
-The Maxwell firmware contains **two audio profiles**: one for the USB-C cable input (with an asymmetric `141 / 149` left/right balance baked in to compensate for something in the USB-C signal path) and one for wireless (`147 / 147` — symmetric). A single NVDM byte (`0xF702`) picks which profile is active.
+The L/R imbalance is a bug Audeze **added** in firmware `v1.0.1.61` and never finished fixing. Pre-v61 firmware (the `v1.0.1.56` release we now bundle as an option) doesn't have the bug at all.
 
-Audeze **designed** a system that would switch this byte automatically based on the live audio source — there's a complete event-routing infrastructure inside the firmware for it: a state handler, per-source helper functions, a 22-entry dispatch table. But the master event router that drives the table was **removed** before shipping. The dispatcher and its table sit in flash as orphaned dead code — verifiable by anyone who reverse-engineers the firmware: the table at `0x081C3134` has zero loaders anywhere in the binary, and surrounding clusters of `bx lr` stubs (notably at `0x081567CC` and `0x0820D264`) are the empty shells of removed state-query functions.
+**Pre-v61:** the Maxwell firmware had one balance default — `NVDM 0xF668 = 142/142` — symmetric, applied to all audio. No per-source switching, no asymmetric correction, nothing to get stuck on. **The imbalance bug literally does not exist in v56.**
 
-With no live driver, `0xF702` becomes a **frozen factory value**. Whatever Audeze's QC bench wrote at end-of-line is what the headset is stuck on for the life of the device — factory reset doesn't touch it, the Audeze app doesn't set it, and the dongle doesn't either. Some units ship at `0x0A` (the asymmetric USB-C profile) and **those are the units that hear the imbalance**, regardless of how they connect. Others ship at `0x00` (wireless, symmetric) and never notice anything wrong.
+**v1.0.1.61 (April 2024)** added an incomplete per-source switching system:
+* A new asymmetric balance default `NVDM 0xF665 = 141/149` (a per-channel correction Audeze evidently thought the USB-C signal path needed)
+* A new NVDM selector `0xF702` that picks which default to load at boot (`0x0A` → `0xF665` USB-C profile; anything else → `0xF668` wireless profile)
+* A complete event-routing infrastructure to switch `0xF702` automatically when the audio source changes — a state handler, per-source helper functions, a 22-entry dispatch table at `0x081C3134`
+* But **the master event router that drives the table was never wired up**. The table has zero loaders anywhere in the binary; surrounding clusters of `bx lr` stubs (at `0x081567CC` and `0x0820D264`) are the empty placeholder slots that were supposed to be filled in. The whole feature shipped inert.
 
-This tool fixes the problem two ways:
-1. **A one-shot RACE write** ("Set Audio Source" button) flips your headset to the wireless profile, no flashing required. The setting persists indefinitely because nothing in the firmware ever rewrites `0xF702`.
-2. **The custom firmware patches the F702 reader** to always return `0` (wireless). After flashing, the headset ignores `0xF702` entirely — bulletproof, even if some future tool re-writes the NVDM byte.
+With no live driver, `0xF702` becomes a **frozen factory value**. Whatever Audeze's QC bench wrote at end-of-line is what the headset is stuck on for the life of the device — factory reset doesn't touch it, the Audeze app doesn't set it, and the dongle doesn't either. Some units shipped at `0x0A` (loading the asymmetric `141/149` default) and **those are the units that hear the imbalance**, regardless of how they connect. Others shipped at `0x00` and never notice anything wrong. `v1.0.1.63` and `v1.0.1.74` carry the same orphaned structure — only the wireless DSP coefficient column gets occasional tuning fixes; the master router still isn't wired up.
 
-Either path leaves you on the wireless profile, where your per-unit balance calibration (also written to NVDM by this tool) takes effect cleanly.
+This tool gives you **three ways to fix it**, in increasing order of "permanence":
+
+1. **One-shot RACE write** — the "Set Audio Source" button on the Balance tab writes `0xF702 = 0`, putting your headset on the wireless profile. The setting persists indefinitely because nothing in the firmware ever rewrites it. No flashing required.
+2. **Custom v74 (or v63 / v61) firmware** — bakes your per-unit balance correction into the NVDM defaults *and* patches the `0xF702` reader function to always return `0`. After flashing, the headset ignores `0xF702` entirely. Bulletproof, immune to anything that might ever write the NVDM byte.
+3. **Custom v56 firmware** — bakes your balance into the pre-bug firmware. No per-source machinery, no asymmetric default. The simplest possible result: one balance value, applied to everything, no `0xF702` to worry about at all.
+
+The Make Custom Firmware button lets you pick which base version to build on.
 
 > 📖 Want the deep technical story — *why* the imbalance exists and how the firmware works internally? See the companion research repo: **[maxwell-firmware-research](https://github.com/kats1123/maxwell-firmware-research)**.
 

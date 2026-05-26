@@ -5,29 +5,63 @@ using System.Reflection;
 using System.Security.Cryptography;
 using SharpCompress.Compressors.LZMA;
 
-// Generates a custom Maxwell v1.0.1.74 firmware (Xbox or PlayStation) with
-// patched L/R balance defaults (NVDM 0xF665 USB-C and 0xF668 dongle/wireless).
+// Generates a custom Maxwell firmware (v1.0.1.56, .61, .63, or .74; Xbox or
+// PlayStation) with patched L/R balance defaults baked in.
 //
-// The balance-default patch sites are located by pattern search, so it is
-// variant-independent: it works on the Xbox and PS .74 images without
-// hard-coded offsets. Verified May 2026 — the search reproduces the known
-// Xbox offsets (0x186C72 / 0x186CA4) exactly, and the Xbox output decompresses
-// byte-identical to the proven Python patcher and passes its integrity verifier.
+// Per-version structure (verified May 2026):
 //
-// NOTE: the patched balance takes effect after a FACTORY RESET of the headset
-// (a flash updates the code; a factory reset runs the default registration
-// that writes NVDM). Confirmed empirically.
+//   v56  — single-profile baseline.  ONE balance NVDM key (0xF668), one
+//          default value (factory-shipped 142/142, symmetric).  NO F665,
+//          NO F702, NO per-source switching at all.  The L/R imbalance
+//          bug doesn't exist in v56 because the asymmetric F665 default
+//          was added in v61.
+//
+//   v61+ — per-source switching system added (incomplete: the master
+//          event router that would drive the dispatch table at 0x081C3134
+//          is missing, so the system never actually runs at runtime).
+//          TWO balance NVDM keys (F665 = USB-C asymmetric 141/149,
+//          F668 = wireless symmetric 147/147), selected by NVDM 0xF702.
+//          F702 is never updated by the firmware itself; it's a frozen
+//          factory value.  Units that shipped with F702 = 0x0A load the
+//          asymmetric F665 and exhibit the L/R imbalance.
+//
+// The custom firmware patches per-version:
+//
+//   v56:  rewrites the single F668 default to the user's calibrated L/R.
+//
+//   v61+: rewrites BOTH F665 and F668 defaults to the same calibrated L/R
+//         (so balance is correct regardless of which profile loads), AND
+//         patches the F702 reader function (FUN_0x0817B2F4) to always
+//         return 0 - pinning the firmware to the wireless audio profile
+//         regardless of NVDM 0xF702.
+//
+// All patch sites are located by pattern search, so it is variant- and
+// version-independent: it works on Xbox and PS variants without hard-coded
+// offsets.
+//
+// NOTE: the patched balance takes effect after a FACTORY RESET of the
+// headset (a flash updates the code; a factory reset runs the default
+// registration that writes NVDM). Confirmed empirically.
 static class FirmwarePatcher
 {
     const int HEADER = 0x1000;
 
+    // Versions we can build custom firmware for. v74 is the recommended
+    // default for users who want all bug fixes; v56 is the "pre-feature"
+    // baseline for users who want the simplest possible firmware (no
+    // per-source machinery at all).
+    public static readonly string[] SupportedVersions = { "56", "61", "63", "74" };
+
     static ushort Rd16(byte[] b, int o) => (ushort)(b[o] | (b[o + 1] << 8));
     static uint Rd32(byte[] b, int o) => (uint)(b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24));
 
-    // Load the embedded stock v1.0.1.74 base for the chosen platform.
-    public static byte[] LoadStockBase(bool playstation)
+    // Load the embedded stock firmware base for the given platform and version.
+    // version is one of "56", "61", "63", "74".
+    public static byte[] LoadStockBase(bool playstation, string version)
     {
-        string want = playstation ? "stock_ps_74.bin" : "stock_xbox_74.bin";
+        if (Array.IndexOf(SupportedVersions, version) < 0)
+            throw new ArgumentException($"Unsupported firmware version '{version}'. Supported: {string.Join(", ", SupportedVersions)}.");
+        string want = playstation ? $"stock_ps_{version}.bin" : $"stock_xbox_{version}.bin";
         var asm = Assembly.GetExecutingAssembly();
         foreach (var n in asm.GetManifestResourceNames())
         {
@@ -42,14 +76,16 @@ static class FirmwarePatcher
         throw new Exception($"Embedded stock firmware '{want}' not found in the executable.");
     }
 
-    // Build a custom .74 firmware (Xbox or PS) with balance L/R baked into
-    // both NVDM balance defaults.
-    public static byte[] Build(bool playstation, int balL, int balR)
+    // Build a custom firmware (any supported version; Xbox or PS) with the
+    // given balance L/R baked into the NVDM balance default(s).
+    public static byte[] Build(bool playstation, string version, int balL, int balR)
     {
         if (balL < 0 || balL > 150 || balR < 0 || balR > 150)
             throw new ArgumentException("Balance values must be 0-150 (driver-safety cap).");
+        if (Array.IndexOf(SupportedVersions, version) < 0)
+            throw new ArgumentException($"Unsupported firmware version '{version}'.");
 
-        byte[] raw = LoadStockBase(playstation);
+        byte[] raw = LoadStockBase(playstation, version);
         byte[] header = raw[0..HEADER];
         byte[] payload = raw[HEADER..];
 
@@ -59,23 +95,24 @@ static class FirmwarePatcher
 
         byte[] decomp = LzmaDecompress(payload[0..5], payload[13..], decSize);
 
-        // Locate and patch both balance-default movw instructions.
-        int btOff = FindBalanceMovw(decomp, 0xF668);
-        int usbOff = FindBalanceMovw(decomp, 0xF665);
         int imm = ((balR & 0xFF) << 8) | (balL & 0xFF);
         byte[] movw = EncodeMovw(3, imm);
-        Array.Copy(movw, 0, decomp, btOff, 4);
-        Array.Copy(movw, 0, decomp, usbOff, 4);
 
-        // Force the NVDM 0xF702 reader (FUN_0x0817B2F4) to always return 0,
-        // pinning every F702-keyed decision to the wireless audio profile.
-        // The Maxwell ships with the per-source switching machinery designed
-        // but the master event router removed - F702 is a frozen factory byte
-        // and some units shipped with F702 = 0x0A (USB-C profile), which
-        // applies the L/R-asymmetric balance default and an older EQ tuning.
-        // Returning 0 from the reader pins the firmware to the wireless
-        // profile permanently, regardless of what NVDM 0xF702 holds.
-        PatchSourceReader(decomp);
+        // F668 (wireless/dongle balance) exists in every supported version.
+        int btOff = FindBalanceMovw(decomp, 0xF668);
+        Array.Copy(movw, 0, decomp, btOff, 4);
+
+        // F665 (USB-C balance) and the F702 reader were added in v61.
+        // v56 has neither; the patches are skipped for v56.
+        if (version != "56")
+        {
+            int usbOff = FindBalanceMovw(decomp, 0xF665);
+            Array.Copy(movw, 0, decomp, usbOff, 4);
+
+            // Force the NVDM 0xF702 reader (FUN_0x0817B2F4) to always return 0,
+            // pinning every F702-keyed decision to the wireless audio profile.
+            PatchSourceReader(decomp);
+        }
 
         // Recompute per-partition SHA-256 (TLV 0x0014).
         int t14 = FindTlv(header, 0x0014);

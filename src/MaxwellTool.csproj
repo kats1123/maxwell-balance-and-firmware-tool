@@ -20,8 +20,16 @@
     <PackageReference Include="SharpCompress" Version="1.0.0" />
   </ItemGroup>
   <ItemGroup>
-    <!-- stock v1.0.1.74 bases, embedded so "Make Custom Firmware" needs no external file -->
+    <!-- stock firmware bases (v1.0.1.56/.61/.63/.74), embedded so
+         "Make Custom Firmware" needs no external file. v56 predates the
+         per-source switching system and is the "before-the-bug" baseline. -->
+    <EmbeddedResource Include="stock_xbox_56.bin" />
+    <EmbeddedResource Include="stock_xbox_61.bin" />
+    <EmbeddedResource Include="stock_xbox_63.bin" />
     <EmbeddedResource Include="stock_xbox_74.bin" />
+    <EmbeddedResource Include="stock_ps_56.bin" />
+    <EmbeddedResource Include="stock_ps_61.bin" />
+    <EmbeddedResource Include="stock_ps_63.bin" />
     <EmbeddedResource Include="stock_ps_74.bin" />
   </ItemGroup>
 </Project>
