@@ -36,3 +36,6 @@ selftest_result.txt
 
 # Local config
 local.config
+
+# Claude Code session tooling (local only)
+.claude/
