@@ -170,6 +170,16 @@ class MaxwellForm : Form
     volatile bool _readyToApply, _done, _flashing, _applying, _rebooting, _resetting, _failed;
     static readonly ushort[] PIDS = { 0x4B18, 0x4B19, 0x4B1A, 0x4B1E };
 
+    // ---------- manual DPI / resize zoom state ----------
+    const int DesignW = 560, DesignH = 640;
+    readonly Dictionary<Control, (Rectangle Bounds, Font Font, bool AutoSize)> _design = new();
+    readonly List<Font> _zoomFonts = new();
+    Font _designFormFont;
+    float _zoom;                                  // physical px per design px
+    // Fonts are in points, which GDI already scales by system DPI - so a
+    // font's point size only carries the part of the zoom beyond DPI.
+    float FontZoom => _zoom * 96f / DeviceDpi;
+
     static string FwDir => Path.Combine(AppContext.BaseDirectory, "firmware");
     static string CustomDir => Path.Combine(AppContext.BaseDirectory, "custom");
 
@@ -184,11 +194,23 @@ class MaxwellForm : Form
 
     public MaxwellForm()
     {
-        Text = "Maxwell Tool  v2.0";
-        ClientSize = new Size(560, 640);
+        Text = "Maxwell Tool  v2.3";
+        // The UI is hand-positioned on a fixed 560x640 design grid. DPI and
+        // window-resize scaling are done manually: SnapshotDesign() records
+        // every control's design bounds/font once the UI is built, and
+        // ApplyZoom() re-derives them from the current client size. (WinForms
+        // AutoScaleMode only fires inside the designer's SuspendLayout/
+        // ResumeLayout pattern, so it does nothing for runtime-built forms
+        // like these - verified empirically at 200% scaling.) The window
+        // opens at the monitor's DPI factor and can be freely resized.
+        // None is load-bearing: the default (Inherit->Font) machinery reacts
+        // to the Font assignments ApplyZoom makes and re-sizes the window and
+        // controls behind our back.
+        AutoScaleMode = AutoScaleMode.None;
+        ClientSize = new Size(DesignW, DesignH);
         StartPosition = FormStartPosition.CenterScreen;
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
         BackColor = BG;
         ForeColor = FG;
         Font = new Font("Segoe UI", 9.5f);
@@ -281,6 +303,13 @@ class MaxwellForm : Form
 
         BuildFirmwarePage();
         BuildBalancePage();
+
+        SnapshotDesign(this);
+        float dpiF = DeviceDpi / 96f;
+        ClientSize = new Size((int)Math.Round(DesignW * dpiF), (int)Math.Round(DesignH * dpiF));
+        MinimumSize = new Size((int)(DesignW * dpiF * 0.7f), (int)(DesignH * dpiF * 0.7f));
+        ApplyZoom();
+        Resize += (s, e) => ApplyZoom();
 
         RefreshVersions();
         WatchFirmwareFolders();
@@ -647,6 +676,7 @@ class MaxwellForm : Form
 
         dlg.Controls.AddRange(new Control[] { head, clb, del, close });
         dlg.AcceptButton = close;
+        ZoomDialog(dlg);
         dlg.ShowDialog(this);
         RefreshVersions();
     }
@@ -955,6 +985,7 @@ class MaxwellForm : Form
         ok.DialogResult = DialogResult.OK;
         dlg.Controls.AddRange(new Control[] { head, body, noteLead, note, ok });
         dlg.AcceptButton = ok;
+        ZoomDialog(dlg);
         dlg.ShowDialog(this);
     }
 
@@ -1002,6 +1033,7 @@ class MaxwellForm : Form
         ok.DialogResult = DialogResult.OK;
         dlg.Controls.AddRange(new Control[] { head, big, body, ok });
         dlg.AcceptButton = ok;
+        ZoomDialog(dlg);
         dlg.ShowDialog(this);
     }
 
@@ -1130,7 +1162,91 @@ SAFETY
         dlg.Controls.Add(box);
         dlg.Controls.Add(close);
         dlg.AcceptButton = close;
+        ZoomDialog(dlg);
         dlg.ShowDialog(this);
+    }
+
+    // ---------- manual DPI / resize zoom engine ----------
+
+    // Scale a design-grid pixel constant to the current zoom (used by the
+    // runtime-built overlays, which aren't part of the design snapshot).
+    int S(int px) => (int)Math.Round(px * _zoom);
+
+    // Record every control's as-authored bounds and font, once, right after
+    // the UI is built. ApplyZoom always rescales from this snapshot, so
+    // repeated resizes never accumulate rounding error.
+    void SnapshotDesign(Control parent)
+    {
+        foreach (Control c in parent.Controls)
+        {
+            // "Position-only" applies to AutoSize LABELS, which size themselves
+            // from their font. Multiline TextBoxes also report AutoSize=true
+            // (a legacy no-op), but their size must still be scaled by hand.
+            _design[c] = (c.Bounds, c.Font, c.AutoSize && c is Label);
+            SnapshotDesign(c);
+        }
+        if (parent == this) _designFormFont = Font;
+    }
+
+    void ApplyZoom()
+    {
+        if (_design.Count == 0 || WindowState == FormWindowState.Minimized) return;
+        float z = Math.Min(ClientSize.Width / (float)DesignW, ClientSize.Height / (float)DesignH);
+        if (z <= 0.05f || Math.Abs(z - _zoom) < 0.002f) return;
+        _zoom = z;
+        float fz = FontZoom;
+        // Letterbox: content keeps the 560x640 aspect, centered horizontally.
+        int xOff = (int)Math.Round((ClientSize.Width - DesignW * z) / 2f);
+        var fresh = new List<Font>();
+        Font ZF(Font d) { var f = new Font(d.FontFamily, d.Size * fz, d.Style); fresh.Add(f); return f; }
+        SuspendLayout();
+        Font = ZF(_designFormFont);
+        foreach (var kv in _design)
+        {
+            var c = kv.Key;
+            var (b, df, auto) = kv.Value;
+            int x = (int)Math.Round(b.X * z) + (c.Parent == this ? xOff : 0);
+            int y = (int)Math.Round(b.Y * z);
+            c.Font = ZF(df);
+            if (auto) c.Location = new Point(x, y);   // AutoSize controls size themselves from the font
+            else c.Bounds = new Rectangle(x, y, (int)Math.Round(b.Width * z), (int)Math.Round(b.Height * z));
+        }
+        ResumeLayout(true);
+        // Old zoom fonts can only be disposed after every control has been
+        // moved off them; the as-authored fonts in _design are never disposed.
+        foreach (var f in _zoomFonts) f.Dispose();
+        _zoomFonts.Clear();
+        _zoomFonts.AddRange(fresh);
+    }
+
+    // Scale a runtime-built dialog, once, to match the main window's current
+    // zoom. Must run after all controls are added and before ShowDialog.
+    void ZoomDialog(Form dlg)
+    {
+        float z = _zoom, fz = FontZoom;
+        if (z <= 0) return;
+        dlg.AutoScaleMode = AutoScaleMode.None;   // see MaxwellForm ctor
+        dlg.SuspendLayout();
+        ScaleTree(dlg, z, fz);
+        // Dialog font last: ScaleTree reads inherited fonts off the dialog,
+        // so scaling the dialog's own font first would double-scale them.
+        dlg.Font = new Font(dlg.Font.FontFamily, dlg.Font.Size * fz, dlg.Font.Style);
+        dlg.ClientSize = new Size((int)Math.Round(dlg.ClientSize.Width * z),
+                                  (int)Math.Round(dlg.ClientSize.Height * z));
+        dlg.ResumeLayout(true);
+    }
+
+    static void ScaleTree(Control parent, float z, float fz)
+    {
+        foreach (Control c in parent.Controls)
+        {
+            var b = c.Bounds;
+            c.Font = new Font(c.Font.FontFamily, c.Font.Size * fz, c.Font.Style);
+            if (c.AutoSize && c is Label) c.Location = new Point((int)Math.Round(b.X * z), (int)Math.Round(b.Y * z));
+            else c.Bounds = new Rectangle((int)Math.Round(b.X * z), (int)Math.Round(b.Y * z),
+                                          (int)Math.Round(b.Width * z), (int)Math.Round(b.Height * z));
+            ScaleTree(c, z, fz);
+        }
     }
 
     // In-window modal dialog: a panel overlay drawn over the tool's own client
@@ -1150,31 +1266,31 @@ SAFETY
         {
             Text = caption,
             AutoSize = true,
-            Location = new Point(24, 20),
-            Font = new Font("Segoe UI Semibold", 13f),
+            Location = new Point(S(24), S(20)),
+            Font = new Font("Segoe UI Semibold", 13f * FontZoom),
             ForeColor = accent,
         };
         var body = new Label
         {
             Text = text,
             AutoSize = true,
-            MaximumSize = new Size(500, 0),
-            Location = new Point(24, 24 + head.PreferredSize.Height + 10),
-            Font = new Font("Segoe UI", 9.5f),
+            MaximumSize = new Size(S(500), 0),
+            Location = new Point(S(24), S(24) + head.PreferredSize.Height + S(10)),
+            Font = new Font("Segoe UI", 9.5f * FontZoom),
             ForeColor = FG,
         };
-        int btnY = body.Location.Y + body.PreferredSize.Height + 22;
+        int btnY = body.Location.Y + body.PreferredSize.Height + S(22);
 
         var result = DialogResult.None;
         var btns = new List<Button>();
         Color secondary = Color.FromArgb(66, 68, 78);
         void MakeBtn(string t, Color bg, bool primary, DialogResult res)
         {
-            var f = new Font("Segoe UI Semibold", 10f);
+            var f = new Font("Segoe UI Semibold", 10f * FontZoom);
             var b = new Button
             {
                 Text = t,
-                Size = new Size(Math.Max(116, TextRenderer.MeasureText(t, f).Width + 34), 34),
+                Size = new Size(Math.Max(S(116), TextRenderer.MeasureText(t, f).Width + S(34)), S(34)),
                 FlatStyle = FlatStyle.Flat,
                 Font = f,
                 ForeColor = primary ? Color.White : FG,
@@ -1201,13 +1317,13 @@ SAFETY
             MakeBtn(primaryText ?? "OK", accent, true, DialogResult.OK);
         }
 
-        int gap = 14;
+        int gap = S(14);
         int totalBtnW = (btns.Count - 1) * gap;
         foreach (var b in btns) totalBtnW += b.Width;
-        int cardW = Math.Min(560, Math.Max(320,
-            Math.Max(head.PreferredSize.Width, body.PreferredSize.Width) + 48));
-        cardW = Math.Max(cardW, totalBtnW + 48);
-        int cardH = btnY + 34 + 22;
+        int cardW = Math.Min(S(560), Math.Max(S(320),
+            Math.Max(head.PreferredSize.Width, body.PreferredSize.Width) + S(48)));
+        cardW = Math.Max(cardW, totalBtnW + S(48));
+        int cardH = btnY + S(34) + S(22);
 
         var card = new Panel { Size = new Size(cardW, cardH), BackColor = PANEL };
         int bx = (cardW - totalBtnW) / 2;
@@ -1217,10 +1333,15 @@ SAFETY
 
         var backdrop = new Panel
         {
-            Bounds = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height),
+            // Sized to the client BEFORE the card is added: an Anchor=None
+            // child shifts by half of any later parent growth, so the Dock
+            // must not be what grows the backdrop from its default size.
+            Size = ClientSize,
+            Dock = DockStyle.Fill,   // keeps covering the client area if the window is resized while open
             BackColor = Color.FromArgb(14, 14, 17),
         };
-        card.Location = new Point((backdrop.Width - cardW) / 2, (backdrop.Height - cardH) / 2);
+        card.Location = new Point((ClientSize.Width - cardW) / 2, (ClientSize.Height - cardH) / 2);
+        card.Anchor = AnchorStyles.None;  // stays centered under resize
         backdrop.Controls.Add(card);
         Controls.Add(backdrop);
         backdrop.BringToFront();
@@ -1246,30 +1367,30 @@ SAFETY
         {
             Text = caption,
             AutoSize = true,
-            Location = new Point(24, 20),
-            Font = new Font("Segoe UI Semibold", 13f),
+            Location = new Point(S(24), S(20)),
+            Font = new Font("Segoe UI Semibold", 13f * FontZoom),
             ForeColor = ACCENT,
         };
         var body = new Label
         {
             Text = text,
             AutoSize = true,
-            MaximumSize = new Size(500, 0),
-            Location = new Point(24, 24 + head.PreferredSize.Height + 10),
-            Font = new Font("Segoe UI", 9.5f),
+            MaximumSize = new Size(S(500), 0),
+            Location = new Point(S(24), S(24) + head.PreferredSize.Height + S(10)),
+            Font = new Font("Segoe UI", 9.5f * FontZoom),
             ForeColor = FG,
         };
-        int barY = body.Location.Y + body.PreferredSize.Height + 20;
-        int cardW = Math.Min(552, Math.Max(380,
-            Math.Max(head.PreferredSize.Width, body.PreferredSize.Width) + 48));
+        int barY = body.Location.Y + body.PreferredSize.Height + S(20);
+        int cardW = Math.Min(S(552), Math.Max(S(380),
+            Math.Max(head.PreferredSize.Width, body.PreferredSize.Width) + S(48)));
         var bar = new ProgressBar
         {
             Style = ProgressBarStyle.Marquee,
             MarqueeAnimationSpeed = 30,
-            Location = new Point(24, barY),
-            Size = new Size(cardW - 48, 10),
+            Location = new Point(S(24), barY),
+            Size = new Size(cardW - S(48), S(10)),
         };
-        int cardH = barY + 10 + 22;
+        int cardH = barY + S(10) + S(22);
 
         var card = new Panel { Size = new Size(cardW, cardH), BackColor = PANEL };
         card.Controls.Add(head);
@@ -1278,10 +1399,15 @@ SAFETY
 
         var backdrop = new Panel
         {
-            Bounds = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height),
+            // Sized to the client BEFORE the card is added: an Anchor=None
+            // child shifts by half of any later parent growth, so the Dock
+            // must not be what grows the backdrop from its default size.
+            Size = ClientSize,
+            Dock = DockStyle.Fill,   // keeps covering the client area if the window is resized while open
             BackColor = Color.FromArgb(14, 14, 17),
         };
-        card.Location = new Point((backdrop.Width - cardW) / 2, (backdrop.Height - cardH) / 2);
+        card.Location = new Point((ClientSize.Width - cardW) / 2, (ClientSize.Height - cardH) / 2);
+        card.Anchor = AnchorStyles.None;  // stays centered under resize
         backdrop.Controls.Add(card);
         Controls.Add(backdrop);
         backdrop.BringToFront();
@@ -1746,7 +1872,7 @@ SAFETY
         using var form = new Form
         {
             Text = "Custom Firmware - choose base version",
-            Size = new Size(480, 320),
+            ClientSize = new Size(464, 282),
             FormBorderStyle = FormBorderStyle.FixedDialog,
             StartPosition = FormStartPosition.CenterParent,
             MaximizeBox = false,
@@ -1816,6 +1942,7 @@ SAFETY
         foreach (var rb in radios) form.Controls.Add(rb);
         form.Controls.Add(ok);
         form.Controls.Add(cancel);
+        ZoomDialog(form);
         if (form.ShowDialog(this) != DialogResult.OK) return null;
         for (int i = 0; i < radios.Length; i++)
             if (radios[i].Checked) { _lastFwVersion = versions[i]; return versions[i]; }
@@ -1954,6 +2081,13 @@ static class Program
 
         AirohaSDK.SetupDllPath();
 
+        // DPI mode must be set before the first window is created (a later
+        // call is silently ignored) - so it goes before the missing-DLL
+        // MessageBox below, not after.
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+
         // The native SDK DLLs must sit next to the exe. If the download was
         // extracted wrong, or the exe was copied out on its own, fail with a
         // clear message instead of a raw DllNotFoundException crash later on.
@@ -1975,9 +2109,6 @@ static class Program
             return;
         }
 
-        Application.SetHighDpiMode(HighDpiMode.SystemAware);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
         // Catch-all so an unexpected error shows a readable message instead of
         // the raw .NET crash dialog.
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

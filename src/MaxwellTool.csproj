@@ -6,7 +6,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <Nullable>disable</Nullable>
     <AssemblyName>MaxwellTool</AssemblyName>
-    <Version>2.2.0</Version>
+    <Version>2.3.0</Version>
     <!-- one-file self-contained publish:
          dotnet publish -c Release -r win-x64 -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
