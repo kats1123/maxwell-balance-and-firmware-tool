@@ -801,6 +801,16 @@ class MaxwellForm : Form
             msg += "\n\nAfter this custom firmware flashes you MUST run a Factory Reset\n"
                  + "for the new balance to take effect - the tool will guide you.";
 
+        // v1.0.1.56 has a known quirk: after the flash, headset<->dongle
+        // pairing is flaky and can take many attempts before it sticks.
+        bool isV56 = targetVer != null && targetVer.EndsWith(".56");
+        if (isV56)
+            msg += "\n\nHEADS-UP for v1.0.1.56: after this flash the headset can be\n"
+                 + "flaky about re-pairing with the dongle. If it will not connect,\n"
+                 + "just keep trying (power the headset off and on, re-seat the\n"
+                 + "dongle, wait a moment) - it can take 10-20 attempts before it\n"
+                 + "sticks. That is a known v56 quirk, NOT a failed flash.";
+
         if (Dlg($"Flash {Path.GetFileName(fwFile)}?\n\n{msg}\n\nDO NOT disconnect anything during the flash!",
             "Confirm Flash", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
             return;
@@ -831,7 +841,7 @@ class MaxwellForm : Form
         }
         else
         {
-            if (flashOk) ShowFlashDoneStock();
+            if (flashOk) ShowFlashDoneStock(isV56);
             await Task.Delay(8000);           // let the headset finish rebooting (~7-8 s)
             RefreshHeadsetInfo();
         }
@@ -930,8 +940,9 @@ class MaxwellForm : Form
 
     // Plain (non-custom) flash success. Carries a yellow note: if this was
     // the v1.0.1.63 downgrade done before a custom flash, restart the headset
-    // first - it makes the next flash far more reliable.
-    void ShowFlashDoneStock()
+    // first - it makes the next flash far more reliable. For a v1.0.1.56
+    // flash the note is replaced by the flaky-pairing heads-up instead.
+    void ShowFlashDoneStock(bool v56)
     {
         using var dlg = new Form
         {
@@ -963,7 +974,7 @@ class MaxwellForm : Form
         };
         var noteLead = new Label
         {
-            Text = "Installing custom firmware next?",
+            Text = v56 ? "Headset won't pair with the dongle?" : "Installing custom firmware next?",
             Location = new Point(26, 100),
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 10.5f),
@@ -971,12 +982,19 @@ class MaxwellForm : Form
         };
         var note = new Label
         {
-            Text = "If you just downgraded to v1.0.1.63 so you can flash the\n"
-                 + "custom v1.0.1.74, restart the headset before that flash:\n"
-                 + "unplug it, make sure NO lights are on (fully off when\n"
-                 + "unplugged), then plug the USB-C cable back in WITHOUT\n"
-                 + "powering it on. Flashing from that state succeeds far\n"
-                 + "more reliably.",
+            Text = v56
+                ? "On v1.0.1.56, re-pairing with the dongle is flaky. If the\n"
+                + "headset will not connect, just keep trying: power it off\n"
+                + "and on, re-seat the dongle, wait a moment, repeat. It can\n"
+                + "take 10-20 attempts before the connection sticks. This is\n"
+                + "a known v56 quirk, NOT a failed flash - do not reflash,\n"
+                + "just retry the pairing."
+                : "If you just downgraded to v1.0.1.63 so you can flash the\n"
+                + "custom v1.0.1.74, restart the headset before that flash:\n"
+                + "unplug it, make sure NO lights are on (fully off when\n"
+                + "unplugged), then plug the USB-C cable back in WITHOUT\n"
+                + "powering it on. Flashing from that state succeeds far\n"
+                + "more reliably.",
             Location = new Point(26, 124),
             Size = new Size(418, 116),
             ForeColor = WARN,
@@ -1122,6 +1140,10 @@ TROUBLESHOOTING
   - Flash fails or hangs: unplug USB-C, power the headset off, wait 10
     seconds, power it on, wait 20 seconds, reconnect, and retry - try
     it with the headset powered off.
+  - On v1.0.1.56 the headset can be flaky about pairing with the
+    dongle. Keep retrying (power the headset off/on, re-seat the
+    dongle) - it can take 10-20 attempts before it sticks. This is a
+    known v56 quirk, not a failed flash.
 
 SAFETY
   - Never set a balance value above 150. High gain can overdrive and
