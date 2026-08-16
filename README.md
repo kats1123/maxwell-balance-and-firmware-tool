@@ -38,7 +38,7 @@ The L/R imbalance is a bug Audeze added in firmware `v1.0.1.61`. Pre-v61 firmwar
 
 **v1.0.1.61 (April 2024)** added a per-source balance system:
 * A new asymmetric balance default `NVDM 0xF665 = 141/149` — a per-channel correction for the USB-C audio path.
-* The original symmetric default `NVDM 0xF668 = 147/147` stayed in place for wireless.
+* `NVDM 0xF668` remained the symmetric balance entry for wireless, but its value changed from `142/142` in v56 to `147/147` in v61.
 * A new NVDM byte `0xF702` chooses which one loads at boot: `0x0A` → `0xF665` (USB-C, asymmetric); anything else → `0xF668` (wireless, symmetric).
 
 The headset reads `0xF702` once at boot and uses it to pick the active balance. What's missing is *anything inside the firmware that automatically updates `0xF702` when the audio source changes*. We searched the firmware exhaustively — every function that reads or writes `0xF702`, every dispatch table, every event-bus path, in both the headset and the dongle, across v56/v61/v63/v74 — and could not find an in-firmware auto-switcher. We spent roughly fifty hours on it. It's possible such a path exists in some encoding we missed; we just couldn't find one.
@@ -117,6 +117,8 @@ The Firmware tab also works as a plain firmware flasher / downgrader.
 
 1. Pick **Target** (Dongle / Headset) and **Version**. The **Platform** (Xbox / PlayStation) is detected from the connected device automatically.
 2. Click **Flash Firmware** and follow the on-screen instructions.
+
+> **Downgrading both the dongle and headset? Flash the dongle first, then the headset.** The dongle flash requires the headset to be powered on and wirelessly paired. If you downgrade the headset first—especially to v1.0.1.56—it may not pair reliably with a dongle that is still on a newer version, leaving you unable to start the dongle flash. Keeping both devices on the same version until the dongle is finished avoids that trap.
 
 ### Headset flash — get the headset into the right state first
 
