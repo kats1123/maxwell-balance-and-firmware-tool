@@ -118,6 +118,8 @@ The Firmware tab also works as a plain firmware flasher / downgrader.
 1. Pick **Target** (Dongle / Headset) and **Version**. The **Platform** (Xbox / PlayStation) is detected from the connected device automatically.
 2. Click **Flash Firmware** and follow the on-screen instructions.
 
+> **Downgrading both the dongle and headset? Flash the dongle first, then the headset.** The dongle flash requires the headset to be powered on and wirelessly paired. If you downgrade the headset first—especially to v1.0.1.56—it may not pair reliably with a dongle that is still on a newer version, leaving you unable to start the dongle flash. Keeping both devices on the same version until the dongle is finished avoids that trap.
+
 ### Headset flash — get the headset into the right state first
 
 This is the single biggest factor in whether a headset flash succeeds:
