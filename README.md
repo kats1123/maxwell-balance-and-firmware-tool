@@ -120,6 +120,17 @@ The Firmware tab also works as a plain firmware flasher / downgrader.
 
 > **Downgrading both the dongle and headset? Flash the dongle first, then the headset.** The dongle flash requires the headset to be powered on and wirelessly paired. If you downgrade the headset first—especially to v1.0.1.56—it may not pair reliably with a dongle that is still on a newer version, leaving you unable to start the dongle flash. Keeping both devices on the same version until the dongle is finished avoids that trap.
 
+### Stock versions included
+
+The Version list offers every stock image in the `firmware/` folder: **v1.0.1.74, v1.0.1.63, v1.0.1.61, v1.0.1.60, v1.0.1.56 and v1.0.1.51**, for both Xbox and PlayStation.
+
+- **v1.0.1.60** is the last build before v61 added the per-source balance system (and the L/R imbalance bug that came with it).
+- **v1.0.1.51** is from before the v56 update, which some users report lowered the maximum volume.
+
+v51 and v60 came straight from Audeze's own firmware server, the same as the other versions, but they haven't been test-flashed with this tool yet. Like v56, they are older than the dongle firmware most people are on, so **flash the dongle first**, and expect re-pairing to possibly take a few tries. Make Custom Firmware still only builds on v56, v61, v63 or v74.
+
+Older Audeze builds (v22 through v46) are archived, untested, in [maxwell-firmware-research](https://github.com/kats1123/maxwell-firmware-research/tree/main/firmware-archive). They are not included in the tool.
+
 ### Headset flash — get the headset into the right state first
 
 This is the single biggest factor in whether a headset flash succeeds:
