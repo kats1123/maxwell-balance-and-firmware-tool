@@ -129,7 +129,7 @@ The Version list offers every stock image in the `firmware/` folder: **v1.0.1.74
 
 v51 and v60 came straight from Audeze's own firmware server, the same as the other versions, but they haven't been test-flashed with this tool yet. Like v56, they are older than the dongle firmware most people are on, so **flash the dongle first**, and expect re-pairing to possibly take a few tries. Make Custom Firmware still only builds on v56, v61, v63 or v74.
 
-Older Audeze builds (v22 through v46) are archived, untested, in [maxwell-firmware-research](https://github.com/kats1123/maxwell-firmware-research/tree/main/firmware-archive). They are not included in the tool.
+Older Audeze builds (v22 through v46) are archived, untested, in [`firmware-archive/`](firmware-archive/). They are not in the Version list.
 
 ### Headset flash — get the headset into the right state first
 
